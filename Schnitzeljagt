@@ -1,0 +1,390 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { motion } from "framer-motion";
+import { Trophy, RotateCcw, Play, Sparkles, Cpu, Gamepad2, ArrowUp, ArrowDown } from "lucide-react";
+
+const FIELD_W = 900;
+const FIELD_H = 500;
+const PADDLE_W = 14;
+const PADDLE_H = 90;
+const BALL_SIZE = 14;
+const PLAYER_X = 28;
+const AI_X = FIELD_W - 28 - PADDLE_W;
+const TARGET_POINTS = 5;
+const TARGET_MATCH_WINS = 3;
+const SOLUTION_WORD = "SCHATZ"; // Hier kannst du das Lösungswort ändern
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function createBall(direction = 1) {
+  const base = 5.2;
+  const angle = (Math.random() * 1.2 - 0.6);
+  return {
+    x: FIELD_W / 2 - BALL_SIZE / 2,
+    y: FIELD_H / 2 - BALL_SIZE / 2,
+    vx: direction * base,
+    vy: angle * 4,
+  };
+}
+
+export default function PingPongRaetselspiel() {
+  const [isRunning, setIsRunning] = useState(false);
+  const [playerY, setPlayerY] = useState(FIELD_H / 2 - PADDLE_H / 2);
+  const [aiY, setAiY] = useState(FIELD_H / 2 - PADDLE_H / 2);
+  const [ball, setBall] = useState(createBall(Math.random() > 0.5 ? 1 : -1));
+  const [playerScore, setPlayerScore] = useState(0);
+  const [aiScore, setAiScore] = useState(0);
+  const [playerWins, setPlayerWins] = useState(0);
+  const [status, setStatus] = useState("Drücke Start und gewinne 3 Spiele gegen den Computer.");
+  const [revealWord, setRevealWord] = useState(false);
+  const [keys, setKeys] = useState({ up: false, down: false });
+  const [difficulty, setDifficulty] = useState(0.72);
+  const frameRef = useRef(null);
+  const lastTimeRef = useRef(0);
+
+  const progressValue = useMemo(() => (playerWins / TARGET_MATCH_WINS) * 100, [playerWins]);
+
+  const resetRound = (serveDirection = 1) => {
+    setPlayerY(FIELD_H / 2 - PADDLE_H / 2);
+    setAiY(FIELD_H / 2 - PADDLE_H / 2);
+    setBall(createBall(serveDirection));
+  };
+
+  const fullReset = () => {
+    setIsRunning(false);
+    setPlayerScore(0);
+    setAiScore(0);
+    setPlayerWins(0);
+    setRevealWord(false);
+    setStatus("Drücke Start und gewinne 3 Spiele gegen den Computer.");
+    resetRound(Math.random() > 0.5 ? 1 : -1);
+  };
+
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (["ArrowUp", "w", "W"].includes(e.key)) setKeys((k) => ({ ...k, up: true }));
+      if (["ArrowDown", "s", "S"].includes(e.key)) setKeys((k) => ({ ...k, down: true }));
+      if (e.key === " ") {
+        e.preventDefault();
+        setIsRunning((v) => !v);
+      }
+    };
+    const onKeyUp = (e) => {
+      if (["ArrowUp", "w", "W"].includes(e.key)) setKeys((k) => ({ ...k, up: false }));
+      if (["ArrowDown", "s", "S"].includes(e.key)) setKeys((k) => ({ ...k, down: false }));
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isRunning || revealWord) return;
+
+    const tick = (time) => {
+      if (!lastTimeRef.current) lastTimeRef.current = time;
+      const dt = Math.min((time - lastTimeRef.current) / 16.67, 1.6);
+      lastTimeRef.current = time;
+
+      setPlayerY((prev) => {
+        let next = prev;
+        const speed = 7.5 * dt;
+        if (keys.up) next -= speed;
+        if (keys.down) next += speed;
+        return clamp(next, 0, FIELD_H - PADDLE_H);
+      });
+
+      setAiY((prev) => {
+        const target = ball.y + BALL_SIZE / 2 - PADDLE_H / 2;
+        const next = prev + clamp((target - prev) * difficulty * dt, -6 * dt, 6 * dt);
+        return clamp(next, 0, FIELD_H - PADDLE_H);
+      });
+
+      setBall((prev) => {
+        let next = {
+          x: prev.x + prev.vx * dt,
+          y: prev.y + prev.vy * dt,
+          vx: prev.vx,
+          vy: prev.vy,
+        };
+
+        if (next.y <= 0) {
+          next.y = 0;
+          next.vy *= -1;
+        }
+        if (next.y + BALL_SIZE >= FIELD_H) {
+          next.y = FIELD_H - BALL_SIZE;
+          next.vy *= -1;
+        }
+
+        const playerHit =
+          next.x <= PLAYER_X + PADDLE_W &&
+          next.x >= PLAYER_X &&
+          next.y + BALL_SIZE >= playerY &&
+          next.y <= playerY + PADDLE_H &&
+          next.vx < 0;
+
+        const aiHit =
+          next.x + BALL_SIZE >= AI_X &&
+          next.x + BALL_SIZE <= AI_X + PADDLE_W &&
+          next.y + BALL_SIZE >= aiY &&
+          next.y <= aiY + PADDLE_H &&
+          next.vx > 0;
+
+        if (playerHit) {
+          const impact = (next.y + BALL_SIZE / 2 - (playerY + PADDLE_H / 2)) / (PADDLE_H / 2);
+          next.x = PLAYER_X + PADDLE_W;
+          next.vx = Math.abs(next.vx) + 0.22;
+          next.vy = impact * 6.5;
+        }
+
+        if (aiHit) {
+          const impact = (next.y + BALL_SIZE / 2 - (aiY + PADDLE_H / 2)) / (PADDLE_H / 2);
+          next.x = AI_X - BALL_SIZE;
+          next.vx = -(Math.abs(next.vx) + 0.2);
+          next.vy = impact * 6.2;
+        }
+
+        if (next.x < -BALL_SIZE) {
+          setAiScore((score) => {
+            const updated = score + 1;
+            if (updated >= TARGET_POINTS) {
+              setStatus("Runde verloren – neuer Versuch!");
+              setPlayerScore(0);
+              setAiScore(0);
+              resetRound(1);
+              return 0;
+            }
+            setStatus("Der Computer punktet.");
+            resetRound(1);
+            return updated;
+          });
+          return prev;
+        }
+
+        if (next.x > FIELD_W + BALL_SIZE) {
+          setPlayerScore((score) => {
+            const updated = score + 1;
+            if (updated >= TARGET_POINTS) {
+              setPlayerWins((wins) => {
+                const totalWins = wins + 1;
+                if (totalWins >= TARGET_MATCH_WINS) {
+                  setRevealWord(true);
+                  setIsRunning(false);
+                  setStatus("Geschafft! Das Lösungswort ist freigeschaltet.");
+                } else {
+                  setStatus(`Stark! Du hast Spiel ${totalWins} von ${TARGET_MATCH_WINS} gewonnen.`);
+                }
+                return totalWins;
+              });
+              setPlayerScore(0);
+              setAiScore(0);
+              resetRound(-1);
+              return 0;
+            }
+            setStatus("Punkt für dich!");
+            resetRound(-1);
+            return updated;
+          });
+          return prev;
+        }
+
+        return next;
+      });
+
+      frameRef.current = requestAnimationFrame(tick);
+    };
+
+    frameRef.current = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(frameRef.current);
+      lastTimeRef.current = 0;
+    };
+  }, [isRunning, revealWord, keys, ball.y, playerY, aiY, difficulty]);
+
+  return (
+    <div className="min-h-screen bg-slate-950 p-6 text-white">
+      <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[1.5fr_0.8fr]">
+        <Card className="rounded-2xl border-slate-800 bg-slate-900/90 shadow-2xl shadow-slate-950">
+          <CardHeader className="border-b border-slate-800 pb-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-3 text-2xl font-bold text-white">
+                  <Gamepad2 className="h-7 w-7 text-cyan-400" />
+                  Ping Pong Rätselspiel
+                </CardTitle>
+                <p className="mt-2 text-sm text-slate-300">
+                  Gewinne <strong>{TARGET_MATCH_WINS} Spiele</strong> gegen den Computer – dann erscheint dein Lösungswort.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  onClick={() => setIsRunning((v) => !v)}
+                  className="rounded-2xl bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+                >
+                  {isRunning ? <><Play className="mr-2 h-4 w-4" /> Pause</> : <><Play className="mr-2 h-4 w-4" /> Start</>}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={fullReset}
+                  className="rounded-2xl border-slate-700 bg-slate-900 text-white hover:bg-slate-800"
+                >
+                  <RotateCcw className="mr-2 h-4 w-4" /> Neu starten
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+
+          <CardContent className="space-y-5 p-5">
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl bg-slate-800/70 p-4">
+                <div className="text-xs uppercase tracking-wide text-slate-400">Aktuelles Spiel</div>
+                <div className="mt-2 text-3xl font-bold">
+                  {playerScore} : {aiScore}
+                </div>
+              </div>
+              <div className="rounded-2xl bg-slate-800/70 p-4">
+                <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-400">
+                  <Trophy className="h-4 w-4 text-amber-400" /> Siege gegen Computer
+                </div>
+                <div className="mt-2 text-3xl font-bold">{playerWins} / {TARGET_MATCH_WINS}</div>
+              </div>
+              <div className="rounded-2xl bg-slate-800/70 p-4">
+                <div className="flex items-center justify-between text-xs uppercase tracking-wide text-slate-400">
+                  <span>Fortschritt</span>
+                  <span>{Math.round(progressValue)}%</span>
+                </div>
+                <Progress value={progressValue} className="mt-3 h-3 bg-slate-700" />
+                <div className="mt-3 text-xs text-slate-400">Erhöhe oder senke die Schwierigkeit rechts.</div>
+              </div>
+            </div>
+
+            <div className="relative overflow-hidden rounded-[28px] border border-slate-700 bg-slate-950">
+              <svg viewBox={`0 0 ${FIELD_W} ${FIELD_H}`} className="aspect-[9/5] w-full bg-[radial-gradient(circle_at_center,_rgba(34,211,238,0.08),_transparent_45%),linear-gradient(180deg,_rgba(15,23,42,0.9),_rgba(2,6,23,1))]">
+                <rect x="0" y="0" width={FIELD_W} height={FIELD_H} fill="transparent" />
+                <line x1={FIELD_W / 2} y1="0" x2={FIELD_W / 2} y2={FIELD_H} stroke="rgba(255,255,255,0.25)" strokeDasharray="10 14" strokeWidth="4" />
+                <text x={FIELD_W / 2 - 80} y="48" fill="rgba(255,255,255,0.85)" fontSize="36" fontWeight="700">{playerScore}</text>
+                <text x={FIELD_W / 2 + 55} y="48" fill="rgba(255,255,255,0.85)" fontSize="36" fontWeight="700">{aiScore}</text>
+                <rect x={PLAYER_X} y={playerY} width={PADDLE_W} height={PADDLE_H} rx="8" fill="#22d3ee" />
+                <rect x={AI_X} y={aiY} width={PADDLE_W} height={PADDLE_H} rx="8" fill="#f472b6" />
+                <rect x={ball.x} y={ball.y} width={BALL_SIZE} height={BALL_SIZE} rx="4" fill="#ffffff" />
+              </svg>
+
+              {!isRunning && !revealWord && (
+                <div className="absolute inset-0 flex items-center justify-center bg-slate-950/45 backdrop-blur-[2px]">
+                  <div className="rounded-3xl border border-slate-700 bg-slate-900/90 px-6 py-5 text-center shadow-2xl">
+                    <div className="mb-2 text-xl font-bold">Bereit?</div>
+                    <p className="max-w-md text-sm text-slate-300">
+                      Bewege den Schläger mit <strong>↑ / ↓</strong> oder <strong>W / S</strong>. Wer zuerst {TARGET_POINTS} Punkte hat, gewinnt ein Spiel.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {revealWord && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="absolute inset-0 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm"
+                >
+                  <div className="mx-4 rounded-[32px] border border-emerald-400/40 bg-slate-900/95 p-8 text-center shadow-2xl">
+                    <div className="mb-3 inline-flex rounded-full bg-emerald-400/10 p-3 text-emerald-300">
+                      <Sparkles className="h-7 w-7" />
+                    </div>
+                    <div className="text-sm uppercase tracking-[0.25em] text-emerald-300">Lösungswort</div>
+                    <div className="mt-4 text-5xl font-black tracking-[0.2em] text-white md:text-6xl">{SOLUTION_WORD}</div>
+                    <p className="mt-4 text-sm text-slate-300">Du hast den Computer dreimal besiegt. Mission erfüllt.</p>
+                    <Button onClick={fullReset} className="mt-6 rounded-2xl bg-emerald-400 text-slate-950 hover:bg-emerald-300">
+                      Noch einmal spielen
+                    </Button>
+                  </div>
+                </motion.div>
+              )}
+            </div>
+
+            <div className="rounded-2xl bg-slate-800/60 p-4 text-sm text-slate-200">
+              <strong>Status:</strong> {status}
+            </div>
+
+            <div className="grid gap-3 md:hidden">
+              <div className="text-xs uppercase tracking-wide text-slate-400">Touch-Steuerung</div>
+              <div className="grid grid-cols-2 gap-3">
+                <Button
+                  onMouseDown={() => setKeys((k) => ({ ...k, up: true }))}
+                  onMouseUp={() => setKeys((k) => ({ ...k, up: false }))}
+                  onMouseLeave={() => setKeys((k) => ({ ...k, up: false }))}
+                  onTouchStart={() => setKeys((k) => ({ ...k, up: true }))}
+                  onTouchEnd={() => setKeys((k) => ({ ...k, up: false }))}
+                  className="rounded-2xl bg-slate-800 py-6 text-white hover:bg-slate-700"
+                >
+                  <ArrowUp className="mr-2 h-5 w-5" /> Hoch
+                </Button>
+                <Button
+                  onMouseDown={() => setKeys((k) => ({ ...k, down: true }))}
+                  onMouseUp={() => setKeys((k) => ({ ...k, down: false }))}
+                  onMouseLeave={() => setKeys((k) => ({ ...k, down: false }))}
+                  onTouchStart={() => setKeys((k) => ({ ...k, down: true }))}
+                  onTouchEnd={() => setKeys((k) => ({ ...k, down: false }))}
+                  className="rounded-2xl bg-slate-800 py-6 text-white hover:bg-slate-700"
+                >
+                  <ArrowDown className="mr-2 h-5 w-5" /> Runter
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="grid gap-6">
+          <Card className="rounded-2xl border-slate-800 bg-slate-900/90 shadow-2xl shadow-slate-950">
+            <CardHeader>
+              <CardTitle className="text-lg text-white">Spieleinstellungen</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm text-slate-300">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-2"><Cpu className="h-4 w-4 text-pink-300" /> Computer-Stärke</span>
+                  <Badge className="rounded-xl bg-slate-800 text-slate-200 hover:bg-slate-800">
+                    {difficulty < 0.6 ? "Leicht" : difficulty < 0.82 ? "Mittel" : "Schwer"}
+                  </Badge>
+                </div>
+                <input
+                  type="range"
+                  min="0.45"
+                  max="0.95"
+                  step="0.01"
+                  value={difficulty}
+                  onChange={(e) => setDifficulty(parseFloat(e.target.value))}
+                  className="w-full accent-cyan-400"
+                />
+              </div>
+
+              <div className="rounded-2xl bg-slate-800/70 p-4">
+                <div className="mb-2 font-semibold text-white">So funktioniert es</div>
+                <ul className="space-y-2 text-sm text-slate-300">
+                  <li>• Ein Spiel geht bis <strong>{TARGET_POINTS} Punkte</strong>.</li>
+                  <li>• Gewinne <strong>{TARGET_MATCH_WINS} Spiele</strong>, um das Lösungswort freizuschalten.</li>
+                  <li>• Das Lösungswort ist aktuell: <code className="rounded bg-slate-950 px-2 py-1 text-cyan-300">{SOLUTION_WORD}</code></li>
+                </ul>
+              </div>
+
+              <div className="rounded-2xl bg-slate-800/70 p-4">
+                <div className="mb-2 font-semibold text-white">NEUES ZIEL: ES KANN BALLERN</div>
+                <p>
+                  Wenn du ein anderes Lösungswort brauchst, ändere einfach im Code die Konstante <code className="rounded bg-slate-950 px-2 py-1 text-cyan-300">SOLUTION_WORD</code>.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
